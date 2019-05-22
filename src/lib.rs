@@ -21,7 +21,7 @@ wish to instrument:
 use rocket_newrelic::Transaction;
 
 #[get("/user/me")]
-pub fn get_me(_: &Transaction) -> &'static str {
+pub fn get_me(_transaction: &Transaction) -> &'static str {
     "It's me!"
 }
 ```
