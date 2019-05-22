@@ -7,6 +7,11 @@ the handler base path and name as the transaction name.
 
 ## Usage
 
+**Important** - this fairing still requires the [New Relic daemon] to be run
+alongside your app in some way, and the underlying [newrelic] and
+[newrelic-sys] crates have some additional build requirements. Make sure these
+are met when trying to use this crate.
+
 Add the crate to your Cargo.toml:
 
 ```toml
@@ -122,6 +127,9 @@ and return either all results, or the first result, respectively.
 
 [Rocket]: rocket::Rocket
 [Transaction]: crate::Transaction
+[newrelic]: https://github.com/sd2k/newrelic
+[newrelic-sys]: https://github.com/sd2k/newrelic-sys
+[New Relic daemon]: https://docs.newrelic.com/docs/agents/c-sdk/get-started/introduction-c-sdk#architecture
 */
 #![deny(missing_docs)]
 use std::{
