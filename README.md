@@ -18,6 +18,12 @@ alongside your app in some way, and the underlying [newrelic] and
 [newrelic-sys] crates have some additional build requirements. Make sure these
 are met when trying to use this crate.
 
+Crucially the `libnewrelic` C SDK requires a few functions not provided by musl
+(at least `qsort_r` and `backtrace`), so this won't (currently) build against
+musl.
+
+---
+
 Add the crate to your Cargo.toml:
 
 ```toml
