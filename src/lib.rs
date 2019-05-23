@@ -597,7 +597,7 @@ mod diesel {
                     }
                     Err(e) => {
                         warn!("Error locking transaction RwLock: {}", e);
-                        func(Default::default())
+                        query.first(conn)
                     }
                 },
                 Transaction::None => query.first(conn),
@@ -641,7 +641,7 @@ mod diesel {
                     }
                     Err(e) => {
                         warn!("Error locking transaction RwLock: {}", e);
-                        func(Default::default())
+                        query.load(conn)
                     }
                 },
                 Transaction::None => query.load(conn),
