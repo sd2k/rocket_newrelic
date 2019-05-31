@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 diesel = { version = "1", optional = true }
 log = "0.4"
-newrelic = { git = "https://github.com/sd2k/newrelic", rev = "8adf87a1c2ef989ebdb5acac61a246388753339f" }
+newrelic = "0.2"
 rocket = "0.4"
 
 [dev-dependencies]
