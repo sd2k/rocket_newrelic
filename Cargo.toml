@@ -1,7 +1,16 @@
 [package]
 name = "rocket_newrelic"
+description = """
+A Rocket fairing instrumenting requests using New Relic.
+
+Attach the fairing to your `Rocket` app, and any requests that include
+a `Transaction` in their request guard will be instrumented using
+the handler base path and name as the transaction name.
+"""
 version = "0.1.0"
 authors = ["Ben Sully <ben.sully@yougov.com>"]
+repository = "https://github.com/sd2k/rocket_newrelic"
+license = "MIT/Apache-2.0"
 edition = "2018"
 
 [dependencies]
