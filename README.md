@@ -92,7 +92,7 @@ fn create_user(transaction: &Transaction, user: Json<Value>) {
     if let Some(Value::String(name)) = user.get("name") {
         transaction.add_attribute("user name", name);
     }
-    if let Some(Some(age)) = user.get("age").map(|a| a.as_i64()) {
+    if let Some(age) = user.get("age").and_then(|a| a.as_i64()) {
         transaction.add_attribute("user age", age);
     }
 
