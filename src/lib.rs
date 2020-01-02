@@ -100,7 +100,7 @@ fn create_user(transaction: &Transaction, user: Json<Value>) {
     }
 
     // Doing expensive operations in a custom segment
-    let _expensive_value: Result<reqwest::Response, reqwest::Error> =
+    let _expensive_value: Result<reqwest::blocking::Response, reqwest::Error> =
         transaction.custom_segment("process user", "process", |s| {
             // Nesting an external segment within the custom segment
             let url = "https://logging-thing";
@@ -110,7 +110,7 @@ fn create_user(transaction: &Transaction, user: Json<Value>) {
                 .build()
                 .unwrap();
             s.external_nested(&external_params, |_| {
-                reqwest::Client::new().post(url).send()
+                reqwest::blocking::Client::new().post(url).send()
             })
         });
 }
