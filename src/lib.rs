@@ -165,21 +165,21 @@ mod error {
 
     impl From<NewRelicError> for Error {
         fn from(other: NewRelicError) -> Self {
-            Error::NewRelicError(other)
+            Self::NewRelicError(other)
         }
     }
 
     impl From<VarError> for Error {
         fn from(other: VarError) -> Self {
-            Error::VarError(other)
+            Self::VarError(other)
         }
     }
 
     impl fmt::Display for Error {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match self {
-                Error::NewRelicError(e) => write!(f, "{}", e),
-                Error::VarError(e) => write!(f, "{}", e),
+                Self::NewRelicError(e) => write!(f, "{}", e),
+                Self::VarError(e) => write!(f, "{}", e),
             }
         }
     }
@@ -195,12 +195,17 @@ pub struct NewRelic(Arc<newrelic::App>);
 
 impl NewRelic {
     /// Create a new New Relic fairing with the default New Relic SDK settings.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the license key is invalid or can't be registered
+    /// with New Relic.
     pub fn new(app_name: &str, license_key: &str) -> Result<Self, error::Error> {
         // Register application with New Relic
         match newrelic::App::new(app_name, license_key) {
             Ok(app) => {
                 info!("Registered with New Relic using app name {}", app_name);
-                Ok(NewRelic(Arc::new(app)))
+                Ok(Self(Arc::new(app)))
             }
             Err(e) => {
                 warn!("Failed to register with New Relic: {}", e);
@@ -213,6 +218,11 @@ impl NewRelic {
     ///
     /// This allows settings such as the SDK log level and destination,
     /// timeout, and daemon socket to be configured.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the license key is invalid or can't be registered
+    /// with New Relic, or if the config cannot be initialized.
     pub fn with_config(
         app_name: &str,
         license_key: &str,
@@ -234,19 +244,23 @@ impl NewRelic {
     /// Optional
     ///
     /// - `NEW_RELIC_LOG_LEVEL` - must be able to be parsed to a `log::Level`.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if:
+    /// - the license key is invalid or can't be registered with New Relic
+    /// - the config cannot be initialized
+    /// - logging cannot be initialized.
     pub fn from_env() -> Result<Self, error::Error> {
         let app_name = env::var("NEW_RELIC_APP_NAME")?;
         let license_key = env::var("NEW_RELIC_LICENSE_KEY")?;
 
         let log_level = env::var("NEW_RELIC_LOG_LEVEL");
         if let Ok(level) = log_level {
-            let level = match level.parse() {
-                Ok(level) => level,
-                Err(_) => {
-                    warn!("Invalid value for NEW_RELIC_LOG_LEVEL; defaulting to Info");
-                    log::Level::Info
-                }
-            };
+            let level = level.parse().unwrap_or_else(|_| {
+                warn!("Invalid value for NEW_RELIC_LOG_LEVEL; defaulting to Info");
+                log::Level::Info
+            });
             newrelic::NewRelicConfig::default()
                 .logging(level, newrelic::LogOutput::StdErr)
                 .init()?;
@@ -302,7 +316,8 @@ impl Fairing for NewRelic {
 /// is needed
 ///
 /// We need to use an `Arc<App>` here because the request-local cache requires
-/// that any references are `'static` (see https://github.com/SergioBenitez/Rocket/issues/1005).
+/// that any references are `'static` (see
+/// [Rocket issue #1005](https://github.com/SergioBenitez/Rocket/issues/1005)).
 /// `App` isn't Clone or Copy since it contains a raw pointer to some C memory
 /// so we reference-count instead.
 enum AppWrapper {
@@ -343,29 +358,30 @@ impl Transaction {
         // Use the route handler as the transaction name.
         // This should always be used inside a request guard so that
         // request.route() is not None.
-        let transaction_name: String = request
-            .route()
-            .map(|r| {
+        let transaction_name: String = request.route().map_or_else(
+            || "unknown_handler".to_string(),
+            |r| {
                 format!(
                     "{}/{}",
                     r.uri.base().trim_start_matches('/'),
                     r.name.as_ref().unwrap_or(&Cow::Borrowed("unknown_handler"))
                 )
-            })
-            .unwrap_or_else(|| "unknown_handler".to_string());
+            },
+        );
 
-        app.web_transaction(&transaction_name)
-            .map(|transaction| {
+        app.web_transaction(&transaction_name).map_or_else(
+            |e| {
+                warn!("Error beginning New Relic transaction: {}", e);
+                Self::None
+            },
+            |transaction| {
                 debug!("Began New Relic transaction");
                 if let Err(e) = transaction.add_attribute("uri", &request.uri().to_string()) {
                     warn!("Could not add uri attribute to transaction: {}", e);
                 };
-                Transaction::Running(InnerTransaction(RwLock::new(transaction)))
-            })
-            .unwrap_or_else(|e| {
-                warn!("Error beginning New Relic transaction: {}", e);
-                Transaction::None
-            })
+                Self::Running(InnerTransaction(RwLock::new(transaction)))
+            },
+        )
     }
 
     /// Add an attribute to the transaction.
@@ -373,7 +389,7 @@ impl Transaction {
     where
         T: Into<newrelic::Attribute<'a>>,
     {
-        if let Transaction::Running(inner) = self {
+        if let Self::Running(inner) = self {
             match inner.0.read() {
                 Ok(t) => {
                     match t.add_attribute(key, attribute) {
@@ -395,7 +411,6 @@ impl Transaction {
     ///
     /// If the current transaction could not be registered, this just calls the
     /// given function outside of a segment.
-    #[inline(always)]
     pub fn custom_segment<F, V>(&self, name: &str, category: &str, func: F) -> V
     where
         F: FnOnce(newrelic::Segment) -> V,
@@ -405,10 +420,10 @@ impl Transaction {
                 Ok(t) => t.custom_segment(name, category, func),
                 Err(e) => {
                     warn!("Error locking transaction RwLock: {}", e);
-                    func(Default::default())
+                    func(newrelic::Segment::default())
                 }
             },
-            Transaction::None => func(Default::default()),
+            Transaction::None => func(newrelic::Segment::default()),
         }
     }
 
@@ -445,7 +460,6 @@ impl Transaction {
     /// will not strip out comments from your SQL string, it will not
     /// handle certain database-specific language features, and it
     /// could fail for other complex cases.
-    #[inline(always)]
     pub fn datastore_segment<F, V>(
         &self,
         datastore: newrelic::Datastore,
@@ -469,16 +483,16 @@ impl Transaction {
                         Ok(p) => t.datastore_segment(&p, func),
                         Err(e) => {
                             warn!("Error building datastore parameters: {}", e);
-                            func(Default::default())
+                            func(newrelic::Segment::default())
                         }
                     }
                 }
                 Err(e) => {
                     warn!("Error locking transaction RwLock: {}", e);
-                    func(Default::default())
+                    func(newrelic::Segment::default())
                 }
             },
-            Transaction::None => func(Default::default()),
+            Transaction::None => func(newrelic::Segment::default()),
         }
     }
 
@@ -495,7 +509,6 @@ impl Transaction {
     ///
     /// See `newrelic::ExternalParamsBuilder` and
     /// `newrelic::Transaction::external_segment` for more details.
-    #[inline(always)]
     pub fn external_segment<F, V>(
         &self,
         host: &str,
@@ -520,16 +533,16 @@ impl Transaction {
                         Ok(p) => t.external_segment(&p, func),
                         Err(e) => {
                             warn!("Error building external New Relic parameters: {}", e);
-                            func(Default::default())
+                            func(newrelic::Segment::default())
                         }
                     }
                 }
                 Err(e) => {
                     warn!("Error locking transaction RwLock: {}", e);
-                    func(Default::default())
+                    func(newrelic::Segment::default())
                 }
             },
-            Transaction::None => func(Default::default()),
+            Transaction::None => func(newrelic::Segment::default()),
         }
     }
 }
