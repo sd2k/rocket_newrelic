@@ -31,7 +31,7 @@ wish to instrument:
 ```rust
 use rocket_newrelic::Transaction;
 
-#[get("/user/me")]
+#[rocket::get("/user/me")]
 pub fn get_me(_transaction: &Transaction) -> &'static str {
     "It's me!"
 }
@@ -40,15 +40,21 @@ pub fn get_me(_transaction: &Transaction) -> &'static str {
 Finally, attach the fairing to your `Rocket` app:
 
 ```rust
+# use rocket_newrelic::Transaction;
 use rocket_newrelic::NewRelic;
 
-fn main() -> {
+# #[rocket::get("/user/me")]
+# pub fn get_me(_transaction: &Transaction) -> &'static str {
+#     "It's me!"
+# }
+
+#[rocket::launch]
+fn launch() -> _ {
     let newrelic = NewRelic::new("MY_APP_NAME", "MY_LICENSE_KEY")
         .expect("Could not register with New Relic");
-    rocket::ignite()
+    rocket::build()
         .manage(newrelic)
-        .mount("/root", routes![get_me])
-        .launch();
+        .mount("/root", rocket::routes![get_me])
 }
 ```
 
@@ -63,13 +69,8 @@ segments. The below example demonstrates some of this functionality; see the
 methods of `Transaction` for more details.
 
 ```rust
-#![feature(proc_macro_hygiene, decl_macro)]
-
-#[macro_use]
-extern crate rocket;
-
 use newrelic::{Datastore, ExternalParamsBuilder};
-use rocket_contrib::json::Json;
+use rocket::serde::json::Json;
 use rocket_newrelic::{NewRelic, Transaction};
 use serde_json::Value;
 
@@ -80,8 +81,8 @@ fn insert_into_db(_: &Json<Value>) -> Result<User, ()> {
     Ok(User {})
 }
 
-#[post("/users", data = "<user>")]
-fn create_user(transaction: &Transaction, user: Json<Value>) {
+#[rocket::post("/users", data = "<user>")]
+async fn create_user(transaction: &Transaction, user: Json<Value>) {
     // Add attributes to a transaction
     if let Some(Value::String(name)) = user.get("name") {
         transaction.add_attribute("user name", name);
@@ -100,7 +101,7 @@ fn create_user(transaction: &Transaction, user: Json<Value>) {
     }
 
     // Doing expensive operations in a custom segment
-    let _expensive_value: Result<reqwest::blocking::Response, reqwest::Error> =
+    let _expensive_value: Result<reqwest::Response, reqwest::Error> =
         transaction.custom_segment("process user", "process", |s| {
             // Nesting an external segment within the custom segment
             let url = "https://logging-thing";
@@ -110,17 +111,17 @@ fn create_user(transaction: &Transaction, user: Json<Value>) {
                 .build()
                 .unwrap();
             s.external_nested(&external_params, |_| {
-                reqwest::blocking::Client::new().post(url).send()
+                reqwest::Client::new().post(url).send()
             })
-        });
+        }).await;
 }
 
-fn main() {
+#[rocket::launch]
+fn launch() -> _ {
     let newrelic = NewRelic::from_env();
-    rocket::ignite()
+    rocket::build()
         .manage(newrelic)
-        .mount("/", routes![create_user])
-        .launch();
+        .mount("/", rocket::routes![create_user])
 }
 ```
 
@@ -139,6 +140,7 @@ and return either all results, or the first result, respectively.
 */
 #![deny(missing_docs)]
 use std::{
+    borrow::Cow,
     env,
     sync::{Arc, RwLock},
 };
@@ -146,8 +148,9 @@ use std::{
 use log::{debug, info, warn};
 use rocket::{
     fairing::{Fairing, Info, Kind},
+    outcome::Outcome,
     request::{self, FromRequest},
-    Data, Outcome, Request, Response,
+    Data, Request, Response,
 };
 
 mod error {
@@ -252,6 +255,7 @@ impl NewRelic {
     }
 }
 
+#[rocket::async_trait]
 impl Fairing for NewRelic {
     fn info(&self) -> Info {
         Info {
@@ -262,7 +266,7 @@ impl Fairing for NewRelic {
 
     /// Store an atomic reference to the app in the request-local cache,
     /// so that it can be used to create a transaction if required.
-    fn on_request(&self, request: &mut Request, _: &Data) {
+    async fn on_request(&self, request: &mut Request<'_>, _: &mut Data<'_>) {
         request.local_cache(|| AppWrapper::App(Arc::clone(&self.0)));
     }
 
@@ -270,7 +274,7 @@ impl Fairing for NewRelic {
     ///
     /// Also adds an error code to the transaction if the response did
     /// not succeed.
-    fn on_response(&self, request: &Request, response: &mut Response) {
+    async fn on_response<'r>(&self, request: &'r Request<'_>, response: &mut Response<'r>) {
         if let Transaction::Running(inner) = request.local_cache(|| Transaction::None) {
             match inner.0.write() {
                 Ok(ref mut t) => {
@@ -344,8 +348,8 @@ impl Transaction {
             .map(|r| {
                 format!(
                     "{}/{}",
-                    r.base.to_string().trim_start_matches('/'),
-                    r.name.unwrap_or("unknown_handler")
+                    r.uri.base().trim_start_matches('/'),
+                    r.name.as_ref().unwrap_or(&Cow::Borrowed("unknown_handler"))
                 )
             })
             .unwrap_or_else(|| "unknown_handler".to_string());
@@ -530,14 +534,18 @@ impl Transaction {
     }
 }
 
-impl<'a, 'r> FromRequest<'a, 'r> for &'a Transaction {
+#[rocket::async_trait]
+impl<'a, 'r> FromRequest<'r> for &'a Transaction
+where
+    'r: 'a,
+{
     type Error = ();
 
     // Begin the New Relic transaction here. This implies that ONLY requests
     // which include a Transaction in their request guards will be traced.
     // Note that this will only produce a valid transaction if the NewRelic
     // fairing has been attached.
-    fn from_request(request: &'a Request<'r>) -> request::Outcome<Self, Self::Error> {
+    async fn from_request(request: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
         let transaction = match request.local_cache(|| AppWrapper::None) {
             AppWrapper::App(ref app) => request.local_cache(|| Transaction::new(app, request)),
             AppWrapper::None => request.local_cache(|| Transaction::None),

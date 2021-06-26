@@ -1,10 +1,8 @@
-#![feature(proc_macro_hygiene, decl_macro)]
-
 #[macro_use]
 extern crate rocket;
 
 use newrelic::{Datastore, ExternalParamsBuilder};
-use rocket_contrib::json::Json;
+use rocket::serde::json::Json;
 use rocket_newrelic::{NewRelic, Transaction};
 use serde_json::Value;
 
@@ -16,7 +14,7 @@ fn insert_into_db(_: &Json<Value>) -> Result<User, ()> {
 }
 
 #[post("/users", data = "<user>")]
-fn create_user(transaction: &Transaction, user: Json<Value>) {
+async fn create_user(transaction: &Transaction, user: Json<Value>) {
     // Add attributes to a transaction
     if let Some(Value::String(name)) = user.get("name") {
         transaction.add_attribute("user name", name);
@@ -35,8 +33,8 @@ fn create_user(transaction: &Transaction, user: Json<Value>) {
     }
 
     // Doing expensive operations in a custom segment
-    let _expensive_value: Result<reqwest::Response, reqwest::Error> =
-        transaction.custom_segment("process user", "process", |s| {
+    let _expensive_value: Result<reqwest::Response, reqwest::Error> = transaction
+        .custom_segment("process user", "process", |s| {
             // Nesting an external segment within the custom segment
             let url = "https://logging-thing";
             let external_params = ExternalParamsBuilder::new(url)
@@ -47,13 +45,14 @@ fn create_user(transaction: &Transaction, user: Json<Value>) {
             s.external_nested(&external_params, |_| {
                 reqwest::Client::new().post(url).send()
             })
-        });
+        })
+        .await;
 }
 
-fn main() {
+#[launch]
+fn launch() -> _ {
     let newrelic = NewRelic::from_env();
-    rocket::ignite()
+    rocket::build()
         .manage(newrelic)
         .mount("/", routes![create_user])
-        .launch();
 }

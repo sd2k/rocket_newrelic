@@ -17,9 +17,9 @@ edition = "2018"
 diesel = { version = "1", optional = true }
 log = "0.4"
 newrelic = "0.2"
-rocket = "0.4"
+rocket = { version = "0.5.0-rc.1", default_features = false }
 
 [dev-dependencies]
-rocket_contrib = "0.4"
+rocket = { version = "0.5.0-rc.1", default_features = false, features = ["json"] }
 reqwest = "0.10"
 serde_json = "1"
