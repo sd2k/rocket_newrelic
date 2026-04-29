@@ -14,7 +14,7 @@ license = "MIT/Apache-2.0"
 edition = "2018"
 
 [dependencies]
-diesel = { version = "1", optional = true }
+diesel = { version = "2", optional = true }
 log = "0.4"
 newrelic = "0.2"
 rocket = { version = "0.5.0-rc.1", default_features = false }
